@@ -19,8 +19,7 @@ load_dotenv()  # lädt .env lokal – muss VOR anderen Imports stehen
 
 import pdfplumber
 from fastapi import Body, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from parser.pdf_parser import parse_pdf
 from parser.text_grouper import group_page_text, _classify_rotation
@@ -33,13 +32,22 @@ app = FastAPI(
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
-# Serve static frontend
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Serve static frontend (optional – only if aiofiles is installed)
+_static_ok = False
+try:
+    from fastapi.staticfiles import StaticFiles
+    if os.path.isdir("static"):
+        app.mount("/static", StaticFiles(directory="static"), name="static")
+        _static_ok = True
+except Exception as _e:
+    print(f"[WARN] StaticFiles not available: {_e}")
 
 
 @app.get("/", include_in_schema=False)
 async def root():
-    return FileResponse("static/index.html")
+    if _static_ok and os.path.isfile("static/index.html"):
+        return FileResponse("static/index.html")
+    return HTMLResponse("<h2>Massenermittlung API läuft. <a href='/docs'>Swagger UI</a></h2>")
 
 
 # ---------------------------------------------------------------------------
