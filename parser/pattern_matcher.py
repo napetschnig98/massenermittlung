@@ -112,6 +112,7 @@ class Fenster:
 @dataclass
 class Tuer:
     bezeichnung: str
+    rl_breite: float | None = None
     dl_breite: float | None = None
     dl_hoehe: float | None = None
 
@@ -303,9 +304,16 @@ def match_door(block: TextBlock) -> Tuer | None:
         return None
 
     bezeichnung = m.group(0)
+    rl_values: list[float] = []
     dl_values: list[float] = []
 
     for line in lines:
+        m2 = _RL_PAT.match(line)
+        if m2:
+            v = parse_number(m2.group(1))
+            if v is not None:
+                rl_values.append(v)
+            continue
         m2 = _DL_PAT.match(line)
         if m2:
             v = parse_number(m2.group(1))
@@ -314,6 +322,7 @@ def match_door(block: TextBlock) -> Tuer | None:
 
     return Tuer(
         bezeichnung=bezeichnung,
+        rl_breite=rl_values[0] if len(rl_values) >= 1 else None,
         dl_breite=dl_values[0] if len(dl_values) >= 1 else None,
         dl_hoehe=dl_values[1] if len(dl_values) >= 2 else None,
     )

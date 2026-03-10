@@ -5,7 +5,8 @@ Parses a floor plan PDF using Claude Vision API.
 Achieves ~90-95% accuracy vs ~65-80% for the regex approach.
 
 Flow:
-  PDF bytes → pymupdf renders page to PNG → Claude Vision API → JSON
+  PDF bytes → pymupdf renders each page to JPEG → Claude Vision API → JSON
+  Multi-page: results from all pages are merged (raeume appended, fenster/tueren deduplicated)
 """
 
 from __future__ import annotations
@@ -16,20 +17,21 @@ import re
 import anthropic
 import pymupdf  # fitz
 
+
 # ---------------------------------------------------------------------------
 # PDF → Image
 # ---------------------------------------------------------------------------
 
-def pdf_page_to_image(pdf_bytes: bytes, page_num: int = 0, dpi: int = 150) -> bytes:
+def pdf_page_to_image(pdf_bytes: bytes, page_num: int = 0, dpi: int = 200) -> bytes:
     """
-    Render one PDF page to PNG bytes using pymupdf.
+    Render one PDF page to JPEG bytes using pymupdf.
     No external dependencies (Poppler etc.) required.
     """
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     page = doc[page_num]
     mat = pymupdf.Matrix(dpi / 72, dpi / 72)
     pix = page.get_pixmap(matrix=mat, colorspace=pymupdf.csRGB)
-    return pix.tobytes("png")
+    return pix.tobytes("jpeg")
 
 
 # ---------------------------------------------------------------------------
@@ -42,49 +44,67 @@ _SYSTEM_PROMPT = (
 )
 
 _USER_PROMPT = """\
-Analysiere diesen Polierplan und extrahiere alle folgenden Elemente:
+Du bist ein Experte für österreichische Baupläne. Analysiere diesen Grundrissplan und extrahiere alle Daten.
 
-1. RÄUME (raeume) – Beschriftungsblock im Inneren jedes Raums:
-   - name: Raumname (z.B. "Wohnküche", "Zimmer", "Bad", "Vorraum", "Stiegenhaus", "Loggia", "AR")
-   - belag: Bodenbelag (z.B. "Parkett", "Fliesen", "Feinsteinzeug", "Betonplatten", "Betonsteinpflaster")
-   - flaeche: Fläche als float, Komma = Dezimaltrenner: "26,37 m²" → 26.37
-   - umfang: Umfang als float: "U: 20,66 m" → 20.66
-   - hoehe: Raumhöhe als float: "H: 2,42 m" → 2.42
+RÄUME – suche nach Textblöcken in den Räumen die so aufgebaut sind:
+Raumname (z.B. "Wohnküche")
+Bodenbelag (z.B. "Parkett" oder "Fliesen")
+Fläche (z.B. "26,37 m2")
+Umfang (z.B. "U: 20,66 m")
+Raumhöhe (z.B. "H: 2,42 m")
 
-2. FENSTER (fenster) – kleine Beschriftungen neben Fenstersymbolen (oft rotiert 90°):
-   - bezeichnung: z.B. "FE_31"
-   - rph: RPH-Wert als float: "RPH -24" → -24
-   - fph: FPH-Wert als float: "FPH 0" → 0
-   - al_breite: erster AL-Wert (Breite): "AL120" → 120
-   - al_hoehe: zweiter AL-Wert (Höhe): "AL231" → 231
-   - rb_breite: erster RB-Wert (Breite): "RB130" → 130
-   - rb_hoehe: zweiter RB-Wert (Höhe): "RB288" → 288
+FENSTER – suche nach Fenstersymbolen mit Beschriftungen daneben oder darunter:
+Bezeichnung beginnt mit FE_ (z.B. "FE_31")
+RPH = Rohbau-Parapethöhe (z.B. "RPH -24")
+FPH = Fertig-Parapethöhe (z.B. "FPH 0")
+AL = Aluminium-Lichte Breite und Höhe (z.B. "AL120" und "AL231")
+RB = Rohbaumaß Breite und Höhe (z.B. "RB130" und "RB288")
 
-3. TÜREN (tueren) – Beschriftungen bei Türsymbolen:
-   - bezeichnung: z.B. "ALUTÜ_07"
-   - dl_breite: erster DL-Wert: "DL100" → 100
-   - dl_hoehe: zweiter DL-Wert: "DL 220" → 220
+TÜREN – suche nach Türsymbolen mit Beschriftungen:
+Bezeichnung beginnt mit ALUTÜ_ (z.B. "ALUTÜ_07")
+RL = Rohbaulichte (z.B. "RL248")
+DL = Durchgangslichte (z.B. "DL100", "DL220")
 
 Regeln:
-- Österreichisches Dezimalformat: Komma = Dezimaltrenner ("26,37" → 26.37, "312,5" → 312.5)
-- Gleiche Fensterbezeichnung (z.B. FE_31) taucht in mehreren Wohnungen auf → nur EINMAL je bezeichnung ausgeben
+- Österreichisches Dezimalformat: Komma = Dezimaltrenner ("26,37" → 26.37)
+- Gleiche Fenster- oder Türbezeichnung nur EINMAL ausgeben
 - Fehlende Werte als null
 - Außenbereiche (Wiese, Kies, Betonpflaster Außen, Kinderspielfläche) NICHT als Räume aufnehmen
-- Loggias und Abstellräume (AR) ARE Räume → aufnehmen
+- Loggias und Abstellräume (AR) SIND Räume → aufnehmen
 
-Antworte NUR mit diesem JSON (kein Text davor oder danach):
+Antworte NUR mit diesem JSON Format, kein Text davor oder danach, keine Erklärungen:
 {
   "raeume": [
-    {"name": "Wohnküche", "belag": "Parkett", "flaeche": 26.37, "umfang": 20.66, "hoehe": 2.42}
+    {
+      "name": "Wohnküche",
+      "belag": "Parkett",
+      "flaeche": 26.37,
+      "umfang": 20.66,
+      "hoehe": 2.42
+    }
   ],
   "fenster": [
-    {"bezeichnung": "FE_31", "rph": -24, "fph": 0, "al_breite": 120, "al_hoehe": 231, "rb_breite": 130, "rb_hoehe": 288}
+    {
+      "bezeichnung": "FE_31",
+      "rph": -24,
+      "fph": 0,
+      "al_breite": 120,
+      "al_hoehe": 231,
+      "rb_breite": 130,
+      "rb_hoehe": 288
+    }
   ],
   "tueren": [
-    {"bezeichnung": "ALUTÜ_07", "dl_breite": 100, "dl_hoehe": 220}
+    {
+      "bezeichnung": "ALUTÜ_07",
+      "rl_breite": 248,
+      "dl_breite": 100,
+      "dl_hoehe": 220
+    }
   ]
-}
-"""
+}"""
+
+_RETRY_HINT = "\n\nDeine letzte Antwort war kein valides JSON. Antworte diesmal NUR mit dem JSON Objekt, ohne Text davor oder danach."
 
 
 # ---------------------------------------------------------------------------
@@ -94,20 +114,16 @@ Antworte NUR mit diesem JSON (kein Text davor oder danach):
 def _extract_json(text: str) -> dict:
     """
     Extract JSON from Claude response.
-    Handles cases where the model wraps output in ```json ... ``` blocks
-    despite being instructed not to.
+    Handles cases where the model wraps output in ```json ... ``` blocks.
     """
-    # Strip markdown code fences if present
     text = re.sub(r"```(?:json)?\s*", "", text)
     text = re.sub(r"```\s*$", "", text).strip()
 
-    # Try direct parse first
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # Fallback: find first { ... } block
     match = re.search(r"\{[\s\S]*\}", text)
     if match:
         return json.loads(match.group(0))
@@ -116,42 +132,69 @@ def _extract_json(text: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Confidence scoring (reuses pattern_matcher logic)
+# Single page analysis with retry
 # ---------------------------------------------------------------------------
 
-def _compute_konfidenz(data: dict) -> dict:
-    """Compute confidence scores using the same logic as pattern_matcher."""
-    try:
-        from .pattern_matcher import Raum, Fenster, Tuer, compute_confidence
+def _analyze_single_page(img_b64: str, client: anthropic.Anthropic) -> dict:
+    """
+    Send one page image to Claude Vision and return parsed dict.
+    Retries up to 3 times if JSON parsing fails.
+    """
+    last_error: Exception | None = None
 
-        raeume_items = []
-        for r in data.get("raeume", []):
-            try:
-                raeume_items.append(Raum(**r))
-            except Exception:
-                pass
+    for attempt in range(3):
+        prompt = _USER_PROMPT if attempt == 0 else _USER_PROMPT + _RETRY_HINT
 
-        fenster_items = []
-        for f in data.get("fenster", []):
-            try:
-                fenster_items.append(Fenster(**f))
-            except Exception:
-                pass
+        response = client.messages.create(
+            model="claude-opus-4-5",
+            max_tokens=4000,
+            system=_SYSTEM_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/jpeg",
+                                "data": img_b64,
+                            },
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+        )
 
-        tueren_items = []
-        for t in data.get("tueren", []):
-            try:
-                tueren_items.append(Tuer(**t))
-            except Exception:
-                pass
+        try:
+            return _extract_json(response.content[0].text)
+        except (ValueError, json.JSONDecodeError) as exc:
+            last_error = exc
 
-        return {
-            "raeume": compute_confidence(raeume_items),
-            "fenster": compute_confidence(fenster_items),
-            "tueren": compute_confidence(tueren_items),
-        }
-    except Exception:
-        return {"raeume": 0.0, "fenster": 0.0, "tueren": 0.0}
+    raise ValueError(f"Claude hat nach 3 Versuchen kein valides JSON geliefert: {last_error}")
+
+
+# ---------------------------------------------------------------------------
+# Confidence scoring
+# ---------------------------------------------------------------------------
+
+def _compute_konfidenz(raeume: list, fenster: list, tueren: list) -> dict:
+    """Compute simple confidence scores based on field completeness."""
+    def score_list(items: list, required_keys: list) -> float:
+        if not items:
+            return 0.0
+        scores = []
+        for item in items:
+            filled = sum(1 for k in required_keys if item.get(k) is not None)
+            scores.append(filled / len(required_keys))
+        return round(sum(scores) / len(scores), 2)
+
+    return {
+        "raeume": score_list(raeume, ["name", "flaeche"]),
+        "fenster": score_list(fenster, ["bezeichnung", "al_breite", "al_hoehe", "rb_breite", "rb_hoehe"]),
+        "tueren": score_list(tueren, ["bezeichnung", "dl_breite", "dl_hoehe"]),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -161,48 +204,48 @@ def _compute_konfidenz(data: dict) -> dict:
 def parse_plan_with_vision(pdf_bytes: bytes) -> dict:
     """
     Parse a PDF floor plan using Claude Vision API.
+    Processes all pages and merges results.
 
     Returns the same dict structure as pdf_parser.parse_pdf():
         raeume, fenster, tueren, konfidenz, methode
     """
-    # Render page to PNG — try 150dpi, downgrade to 100dpi if too large
-    img_bytes = pdf_page_to_image(pdf_bytes, dpi=150)
-    if len(img_bytes) > 4_500_000:
-        img_bytes = pdf_page_to_image(pdf_bytes, dpi=100)
-
-    img_b64 = base64.standard_b64encode(img_bytes).decode("utf-8")
-
-    # Call Claude Vision
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from environment
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=8192,
-        system=_SYSTEM_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/png",
-                            "data": img_b64,
-                        },
-                    },
-                    {"type": "text", "text": _USER_PROMPT},
-                ],
-            }
-        ],
-    )
 
-    raw_text = response.content[0].text
-    data = _extract_json(raw_text)
+    doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    num_pages = len(doc)
+    doc.close()
+
+    raeume: list[dict] = []
+    fenster_dict: dict[str, dict] = {}
+    tueren_dict: dict[str, dict] = {}
+
+    for page_num in range(num_pages):
+        # Render page — try 200dpi, downgrade to 150dpi if too large
+        img_bytes = pdf_page_to_image(pdf_bytes, page_num=page_num, dpi=200)
+        if len(img_bytes) > 4_500_000:
+            img_bytes = pdf_page_to_image(pdf_bytes, page_num=page_num, dpi=150)
+
+        img_b64 = base64.standard_b64encode(img_bytes).decode("utf-8")
+
+        data = _analyze_single_page(img_b64, client)
+
+        raeume.extend(data.get("raeume", []))
+
+        for f in data.get("fenster", []):
+            if isinstance(f, dict) and f.get("bezeichnung"):
+                fenster_dict[f["bezeichnung"]] = f
+
+        for t in data.get("tueren", []):
+            if isinstance(t, dict) and t.get("bezeichnung"):
+                tueren_dict[t["bezeichnung"]] = t
+
+    fenster_list = list(fenster_dict.values())
+    tueren_list = list(tueren_dict.values())
 
     return {
-        "raeume": data.get("raeume", []),
-        "fenster": data.get("fenster", []),
-        "tueren": data.get("tueren", []),
-        "konfidenz": _compute_konfidenz(data),
+        "raeume": raeume,
+        "fenster": fenster_list,
+        "tueren": tueren_list,
+        "konfidenz": _compute_konfidenz(raeume, fenster_list, tueren_list),
         "methode": "vision",
     }
