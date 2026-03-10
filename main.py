@@ -10,8 +10,10 @@ FastAPI application:
   GET  /health              – Railway/Vercel Healthcheck
 """
 
+import asyncio
 import io
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 from dotenv import load_dotenv
 
@@ -23,6 +25,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from parser.pdf_parser import parse_pdf
 from parser.text_grouper import group_page_text, _classify_rotation
+
+_executor = ThreadPoolExecutor(max_workers=2)
 
 app = FastAPI(
     title="Massenermittlung – Bauplan Parser",
@@ -84,7 +88,10 @@ async def parse_plan(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY nicht konfiguriert. Bitte in Railway Variables oder Supabase config-Tabelle setzen.")
 
     try:
-        result = parse_pdf(pdf_bytes, api_key=api_key)
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            _executor, lambda: parse_pdf(pdf_bytes, api_key=api_key)
+        )
     except ValueError as exc:
         if "no_text_layer" in str(exc):
             raise HTTPException(
