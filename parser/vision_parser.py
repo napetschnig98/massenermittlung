@@ -220,10 +220,10 @@ def parse_plan_with_vision(pdf_bytes: bytes, api_key: str | None = None) -> dict
     tueren_dict: dict[str, dict] = {}
 
     for page_num in range(num_pages):
-        # Render page — 150dpi to keep memory low on server (Railway 512MB limit)
-        img_bytes = pdf_page_to_image(pdf_bytes, page_num=page_num, dpi=150)
-        if len(img_bytes) > 4_500_000:
-            img_bytes = pdf_page_to_image(pdf_bytes, page_num=page_num, dpi=100)
+        # Render page — start at 100dpi to keep memory low (Railway 512MB limit)
+        img_bytes = pdf_page_to_image(pdf_bytes, page_num=page_num, dpi=100)
+        if len(img_bytes) > 3_000_000:
+            img_bytes = pdf_page_to_image(pdf_bytes, page_num=page_num, dpi=72)
 
         img_b64 = base64.standard_b64encode(img_bytes).decode("utf-8")
 
