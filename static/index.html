@@ -398,7 +398,7 @@ async function uploadFile(file) {
       const text = await res.text();
       throw new Error(`Server-Fehler (${res.status}): ${text.substring(0, 300)}`);
     }
-    if (!res.ok) throw new Error(data.detail || 'Fehler beim Parsen');
+    if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail) || `HTTP ${res.status}`);
     showResults(file.name, data);
   } catch (e) {
     showError(e.message);
