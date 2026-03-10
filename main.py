@@ -76,9 +76,12 @@ async def parse_plan(file: UploadFile = File(...)):
     try:
         from supabase_client import get_anthropic_key
         api_key = get_anthropic_key()
-    except Exception:
-        # Fallback: aus Umgebungsvariable (für lokale Entwicklung)
+    except Exception as key_exc:
+        print(f"[INFO] Supabase key fetch failed ({key_exc}), using env var fallback")
         api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    if not api_key:
+        raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY nicht konfiguriert. Bitte in Railway Variables oder Supabase config-Tabelle setzen.")
 
     try:
         result = parse_pdf(pdf_bytes, api_key=api_key)
