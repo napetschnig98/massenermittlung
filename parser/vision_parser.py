@@ -201,7 +201,7 @@ def _compute_konfidenz(raeume: list, fenster: list, tueren: list) -> dict:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def parse_plan_with_vision(pdf_bytes: bytes) -> dict:
+def parse_plan_with_vision(pdf_bytes: bytes, api_key: str | None = None) -> dict:
     """
     Parse a PDF floor plan using Claude Vision API.
     Processes all pages and merges results.
@@ -209,7 +209,7 @@ def parse_plan_with_vision(pdf_bytes: bytes) -> dict:
     Returns the same dict structure as pdf_parser.parse_pdf():
         raeume, fenster, tueren, konfidenz, methode
     """
-    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from environment
+    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
 
     doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
     num_pages = len(doc)

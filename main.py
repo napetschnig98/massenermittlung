@@ -1,19 +1,26 @@
 """
 main.py
 -------
-FastAPI application with a single endpoint:
-  POST /api/parse-plan  – accepts a PDF, returns structured JSON
+FastAPI application:
+  GET  /                    – Frontend (static/index.html)
+  POST /api/parse-plan      – PDF hochladen, parsen, in Supabase speichern
+  GET  /api/results         – Letzte 20 Ergebnisse aus Supabase
+  GET  /api/results/{id}    – Einzelnes Ergebnis
+  PUT  /api/results/{id}    – Ergebnis bearbeiten
+  GET  /health              – Railway/Vercel Healthcheck
 """
 
 import io
+import os
 
 from dotenv import load_dotenv
 
-load_dotenv()  # lädt ANTHROPIC_API_KEY aus .env – muss VOR anderen Imports stehen
+load_dotenv()  # lädt .env lokal – muss VOR anderen Imports stehen
 
 import pdfplumber
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import Body, FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from parser.pdf_parser import parse_pdf
 from parser.text_grouper import group_page_text, _classify_rotation
@@ -21,11 +28,23 @@ from parser.text_grouper import group_page_text, _classify_rotation
 app = FastAPI(
     title="Massenermittlung – Bauplan Parser",
     description="Extracts rooms, windows, and doors from Austrian AutoCAD/ArchiCAD PDF floor plans.",
-    version="1.0.0",
+    version="2.0.0",
 )
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
+# Serve static frontend
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+@app.get("/", include_in_schema=False)
+async def root():
+    return FileResponse("static/index.html")
+
+
+# ---------------------------------------------------------------------------
+# Parse endpoint
+# ---------------------------------------------------------------------------
 
 @app.post(
     "/api/parse-plan",
@@ -33,15 +52,6 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
     response_description="Extracted rooms, windows, doors and confidence scores",
 )
 async def parse_plan(file: UploadFile = File(...)):
-    """
-    Upload a vector PDF floor plan (AutoCAD / ArchiCAD export).
-    Returns structured JSON with:
-    - **raeume**: list of rooms with name, floor material, area, perimeter, height
-    - **fenster**: list of windows with designation, RPH, FPH, AL/RB dimensions
-    - **tueren**: list of doors with designation and door-leaf dimensions
-    - **konfidenz**: confidence scores per category (0.0 – 1.0)
-    """
-    # Validate file type
     if not (file.filename or "").lower().endswith(".pdf"):
         raise HTTPException(status_code=422, detail="Nur PDF-Dateien werden akzeptiert.")
 
@@ -53,8 +63,17 @@ async def parse_plan(file: UploadFile = File(...)):
     if len(pdf_bytes) > MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="Datei überschreitet das Limit von 50 MB.")
 
+    # Fetch Anthropic API key from Supabase (falls konfiguriert)
+    api_key: str | None = None
     try:
-        result = parse_pdf(pdf_bytes)
+        from supabase_client import get_anthropic_key
+        api_key = get_anthropic_key()
+    except Exception:
+        # Fallback: aus Umgebungsvariable (für lokale Entwicklung)
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+
+    try:
+        result = parse_pdf(pdf_bytes, api_key=api_key)
     except ValueError as exc:
         if "no_text_layer" in str(exc):
             raise HTTPException(
@@ -68,8 +87,57 @@ async def parse_plan(file: UploadFile = File(...)):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Parsing fehlgeschlagen: {exc}")
 
+    # Ergebnis in Supabase speichern
+    try:
+        from supabase_client import save_result
+        result_id = save_result(file.filename or "unbekannt", result)
+        result["id"] = result_id
+    except Exception:
+        result["id"] = None  # Supabase nicht konfiguriert – kein Fehler
+
     return JSONResponse(content=result)
 
+
+# ---------------------------------------------------------------------------
+# Results CRUD
+# ---------------------------------------------------------------------------
+
+@app.get("/api/results", summary="Liste aller gespeicherten Ergebnisse")
+async def list_results():
+    try:
+        from supabase_client import get_results
+        return JSONResponse(content=get_results())
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/results/{result_id}", summary="Einzelnes Ergebnis laden")
+async def get_result(result_id: str):
+    try:
+        from supabase_client import get_result
+        data = get_result(result_id)
+        if not data:
+            raise HTTPException(status_code=404, detail="Nicht gefunden.")
+        return JSONResponse(content=data)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.put("/api/results/{result_id}", summary="Ergebnis aktualisieren (nach Bearbeitung)")
+async def update_result(result_id: str, body: dict = Body(...)):
+    try:
+        from supabase_client import update_result as _update
+        _update(result_id, body)
+        return {"ok": True}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Debug + Health
+# ---------------------------------------------------------------------------
 
 @app.post(
     "/api/debug-text",
@@ -77,10 +145,6 @@ async def parse_plan(file: UploadFile = File(...)):
     include_in_schema=True,
 )
 async def debug_text(file: UploadFile = File(...)):
-    """
-    Hilfreich für Diagnose: zeigt was pdfplumber aus dem Plan liest.
-    Gibt Rotations-Statistiken, die ersten 80 Wörter und die ersten 15 Text-Blöcke zurück.
-    """
     pdf_bytes = await file.read()
     if len(pdf_bytes) == 0:
         raise HTTPException(status_code=422, detail="Leere Datei.")
@@ -90,28 +154,21 @@ async def debug_text(file: UploadFile = File(...)):
             page = pdf.pages[0]
             chars = page.chars
 
-            # Rotation statistics
             rot_stats: dict[str, int] = {"horizontal": 0, "ccw90": 0, "cw90": 0, "other": 0}
             for c in chars:
                 if c.get("text", "").strip():
                     rot_stats[_classify_rotation(c)] = rot_stats.get(_classify_rotation(c), 0) + 1
 
-            # Sample raw words
             words = page.extract_words(x_tolerance=3, y_tolerance=3, keep_blank_chars=False)
             words_sample = [
                 {"text": w["text"], "x0": round(w["x0"], 1), "top": round(w["top"], 1)}
                 for w in words[:80]
             ]
 
-            # Sample text blocks
             h_blocks, r_blocks = group_page_text(page)
             h_sample = [
                 {"lines": b.lines, "x0": round(b.x0, 1), "top": round(b.top, 1)}
                 for b in h_blocks[:15]
-            ]
-            r_sample = [
-                {"lines": b.lines, "x0": round(b.x0, 1), "top": round(b.top, 1)}
-                for b in r_blocks[:10]
             ]
 
         return JSONResponse({
@@ -123,7 +180,6 @@ async def debug_text(file: UploadFile = File(...)):
                 "h_blocks_count": len(h_blocks),
                 "r_blocks_count": len(r_blocks),
                 "h_blocks_sample": h_sample,
-                "r_blocks_sample": r_sample,
             }
         })
     except Exception as exc:

@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Massenermittlung</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f0f2f5;
+    color: #1a1a2e;
+    min-height: 100vh;
+  }
+
+  header {
+    background: #1a1a2e;
+    color: #fff;
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 2px 8px rgba(0,0,0,.3);
+  }
+  header h1 { font-size: 1.3rem; font-weight: 700; letter-spacing: .5px; }
+  header span { font-size: .8rem; opacity: .6; }
+
+  .container { max-width: 1100px; margin: 32px auto; padding: 0 20px; }
+
+  /* Upload card */
+  .upload-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 36px;
+    text-align: center;
+    border: 2px dashed #c8cdd5;
+    cursor: pointer;
+    transition: border-color .2s, background .2s;
+    margin-bottom: 24px;
+  }
+  .upload-card:hover, .upload-card.drag-over {
+    border-color: #4f46e5;
+    background: #f5f3ff;
+  }
+  .upload-card input { display: none; }
+  .upload-card .icon { font-size: 3rem; margin-bottom: 12px; }
+  .upload-card p { color: #666; margin-bottom: 16px; }
+  .btn-upload {
+    background: #4f46e5;
+    color: #fff;
+    border: none;
+    padding: 10px 24px;
+    border-radius: 8px;
+    font-size: .95rem;
+    cursor: pointer;
+    transition: background .2s;
+  }
+  .btn-upload:hover { background: #3730a3; }
+
+  /* Spinner */
+  .spinner-wrap {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 32px;
+  }
+  .spinner {
+    width: 48px; height: 48px;
+    border: 4px solid #e0e0e0;
+    border-top-color: #4f46e5;
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Tabs */
+  .tabs { display: none; }
+  .tab-bar {
+    display: flex;
+    gap: 4px;
+    border-bottom: 2px solid #e5e7eb;
+    margin-bottom: 20px;
+  }
+  .tab-btn {
+    padding: 10px 20px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: .95rem;
+    color: #666;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    transition: color .15s;
+  }
+  .tab-btn.active { color: #4f46e5; border-bottom-color: #4f46e5; font-weight: 600; }
+
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* Table */
+  .result-card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.07);
+  }
+  .result-card h2 {
+    font-size: 1rem;
+    margin-bottom: 16px;
+    color: #374151;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .badge {
+    background: #e0e7ff;
+    color: #4338ca;
+    font-size: .72rem;
+    padding: 2px 8px;
+    border-radius: 99px;
+    font-weight: 600;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  th {
+    background: #f9fafb;
+    text-align: left;
+    padding: 10px 12px;
+    font-weight: 600;
+    color: #6b7280;
+    border-bottom: 1px solid #e5e7eb;
+    white-space: nowrap;
+  }
+  td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #f3f4f6;
+    vertical-align: middle;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #fafafa; }
+
+  td input {
+    width: 100%;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: .88rem;
+    background: transparent;
+    transition: border-color .15s, background .15s;
+  }
+  td input:focus {
+    outline: none;
+    border-color: #4f46e5;
+    background: #f5f3ff;
+  }
+
+  .btn-save {
+    background: #10b981;
+    color: #fff;
+    border: none;
+    padding: 4px 14px;
+    border-radius: 6px;
+    font-size: .8rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .btn-save:hover { background: #059669; }
+  .btn-saved { background: #6b7280 !important; }
+
+  /* Meta bar */
+  .meta-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+    font-size: .85rem;
+    color: #6b7280;
+  }
+  .meta-bar strong { color: #374151; }
+
+  /* History */
+  .hist-btn {
+    background: #f3f4f6;
+    border: 1px solid #d1d5db;
+    padding: 8px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: .85rem;
+    margin-bottom: 20px;
+    transition: background .15s;
+  }
+  .hist-btn:hover { background: #e5e7eb; }
+
+  .history-list {
+    display: none;
+    background: #fff;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 24px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.07);
+  }
+  .history-list h3 { font-size: .95rem; margin-bottom: 12px; color: #374151; }
+  .hist-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid #f3f4f6;
+    font-size: .85rem;
+  }
+  .hist-item:last-child { border-bottom: none; }
+  .hist-item .name { font-weight: 500; }
+  .hist-item .date { color: #9ca3af; font-size: .78rem; }
+  .hist-item button {
+    background: #4f46e5;
+    color: #fff;
+    border: none;
+    padding: 4px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: .78rem;
+  }
+
+  /* Error */
+  .error-box {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #dc2626;
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 16px;
+    display: none;
+  }
+
+  .empty { color: #9ca3af; font-size: .85rem; padding: 16px 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚒ Massenermittlung</h1>
+  <span>Österreichische Baupläne automatisch auslesen</span>
+</header>
+
+<div class="container">
+
+  <!-- History toggle -->
+  <button class="hist-btn" onclick="toggleHistory()">📋 Letzte Auswertungen anzeigen</button>
+  <div class="history-list" id="historyList">
+    <h3>Letzte Auswertungen</h3>
+    <div id="historyItems"><div class="empty">Wird geladen...</div></div>
+  </div>
+
+  <!-- Upload -->
+  <div class="upload-card" id="dropZone">
+    <input type="file" id="fileInput" accept=".pdf">
+    <div class="icon">📄</div>
+    <p>PDF-Bauplan hier ablegen oder auswählen</p>
+    <button class="btn-upload" onclick="document.getElementById('fileInput').click()">
+      Datei auswählen
+    </button>
+  </div>
+
+  <!-- Spinner -->
+  <div class="spinner-wrap" id="spinner">
+    <div class="spinner"></div>
+    <p style="color:#666">Plan wird analysiert... (kann 15–30 Sek. dauern)</p>
+  </div>
+
+  <!-- Error -->
+  <div class="error-box" id="errorBox"></div>
+
+  <!-- Results -->
+  <div class="tabs" id="resultSection">
+
+    <div class="meta-bar">
+      <span>Datei: <strong id="metaFile">–</strong></span>
+      <span>Methode: <strong id="metaMethod">–</strong></span>
+      <span>Konfidenz: <strong id="metaKonf">–</strong></span>
+    </div>
+
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="switchTab('raeume', this)">🏠 Räume</button>
+      <button class="tab-btn" onclick="switchTab('fenster', this)">🪟 Fenster</button>
+      <button class="tab-btn" onclick="switchTab('tueren', this)">🚪 Türen</button>
+    </div>
+
+    <!-- Räume -->
+    <div class="tab-panel active" id="tab-raeume">
+      <div class="result-card">
+        <h2>Räume <span class="badge" id="badge-raeume">0</span></h2>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Name</th>
+              <th>Belag</th>
+              <th>Fläche (m²)</th>
+              <th>Umfang (m)</th>
+              <th>Höhe (m)</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tbody-raeume"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Fenster -->
+    <div class="tab-panel" id="tab-fenster">
+      <div class="result-card">
+        <h2>Fenster <span class="badge" id="badge-fenster">0</span></h2>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Bezeichnung</th>
+              <th>RPH</th>
+              <th>FPH</th>
+              <th>AL Breite</th>
+              <th>AL Höhe</th>
+              <th>RB Breite</th>
+              <th>RB Höhe</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tbody-fenster"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Türen -->
+    <div class="tab-panel" id="tab-tueren">
+      <div class="result-card">
+        <h2>Türen <span class="badge" id="badge-tueren">0</span></h2>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Bezeichnung</th>
+              <th>RL Breite</th>
+              <th>DL Breite</th>
+              <th>DL Höhe</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="tbody-tueren"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /tabs -->
+</div>
+
+<script>
+let currentResultId = null;
+let currentData = { raeume: [], fenster: [], tueren: [] };
+
+// ---- Upload ----------------------------------------------------------------
+
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) uploadFile(f);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) uploadFile(fileInput.files[0]);
+});
+
+async function uploadFile(file) {
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
+    showError('Bitte eine PDF-Datei auswählen.');
+    return;
+  }
+
+  showSpinner(true);
+  hideError();
+  document.getElementById('resultSection').style.display = 'none';
+
+  const form = new FormData();
+  form.append('file', file);
+
+  try {
+    const res = await fetch('/api/parse-plan', { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Fehler beim Parsen');
+    showResults(file.name, data);
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    showSpinner(false);
+  }
+}
+
+// ---- Render results -------------------------------------------------------
+
+function showResults(filename, data) {
+  currentResultId = data.id || null;
+  currentData = data;
+
+  document.getElementById('metaFile').textContent = filename;
+  document.getElementById('metaMethod').textContent = data.methode || '–';
+
+  const k = data.konfidenz || {};
+  const avg = ((k.raeume || 0) + (k.fenster || 0) + (k.tueren || 0)) / 3;
+  document.getElementById('metaKonf').textContent = Math.round(avg * 100) + '%';
+
+  renderRaeume(data.raeume || []);
+  renderFenster(data.fenster || []);
+  renderTueren(data.tueren || []);
+
+  document.getElementById('resultSection').style.display = 'block';
+  document.getElementById('tab-raeume').classList.add('active');
+}
+
+function renderRaeume(items) {
+  document.getElementById('badge-raeume').textContent = items.length;
+  const tbody = document.getElementById('tbody-raeume');
+  tbody.innerHTML = items.length === 0
+    ? '<tr><td colspan="7" class="empty">Keine Räume gefunden</td></tr>'
+    : items.map((r, i) => `
+      <tr data-idx="${i}" data-type="raeume">
+        <td>${i + 1}</td>
+        <td><input value="${esc(r.name)}" data-field="name"></td>
+        <td><input value="${esc(r.belag)}" data-field="belag"></td>
+        <td><input value="${nullStr(r.flaeche)}" data-field="flaeche"></td>
+        <td><input value="${nullStr(r.umfang)}" data-field="umfang"></td>
+        <td><input value="${nullStr(r.hoehe)}" data-field="hoehe"></td>
+        <td><button class="btn-save" onclick="saveRow(this, ${i}, 'raeume')">Speichern</button></td>
+      </tr>`).join('');
+}
+
+function renderFenster(items) {
+  document.getElementById('badge-fenster').textContent = items.length;
+  const tbody = document.getElementById('tbody-fenster');
+  tbody.innerHTML = items.length === 0
+    ? '<tr><td colspan="9" class="empty">Keine Fenster gefunden</td></tr>'
+    : items.map((f, i) => `
+      <tr data-idx="${i}" data-type="fenster">
+        <td>${i + 1}</td>
+        <td><input value="${esc(f.bezeichnung)}" data-field="bezeichnung"></td>
+        <td><input value="${nullStr(f.rph)}" data-field="rph"></td>
+        <td><input value="${nullStr(f.fph)}" data-field="fph"></td>
+        <td><input value="${nullStr(f.al_breite)}" data-field="al_breite"></td>
+        <td><input value="${nullStr(f.al_hoehe)}" data-field="al_hoehe"></td>
+        <td><input value="${nullStr(f.rb_breite)}" data-field="rb_breite"></td>
+        <td><input value="${nullStr(f.rb_hoehe)}" data-field="rb_hoehe"></td>
+        <td><button class="btn-save" onclick="saveRow(this, ${i}, 'fenster')">Speichern</button></td>
+      </tr>`).join('');
+}
+
+function renderTueren(items) {
+  document.getElementById('badge-tueren').textContent = items.length;
+  const tbody = document.getElementById('tbody-tueren');
+  tbody.innerHTML = items.length === 0
+    ? '<tr><td colspan="6" class="empty">Keine Türen gefunden</td></tr>'
+    : items.map((t, i) => `
+      <tr data-idx="${i}" data-type="tueren">
+        <td>${i + 1}</td>
+        <td><input value="${esc(t.bezeichnung)}" data-field="bezeichnung"></td>
+        <td><input value="${nullStr(t.rl_breite)}" data-field="rl_breite"></td>
+        <td><input value="${nullStr(t.dl_breite)}" data-field="dl_breite"></td>
+        <td><input value="${nullStr(t.dl_hoehe)}" data-field="dl_hoehe"></td>
+        <td><button class="btn-save" onclick="saveRow(this, ${i}, 'tueren')">Speichern</button></td>
+      </tr>`).join('');
+}
+
+// ---- Save row -------------------------------------------------------------
+
+async function saveRow(btn, idx, type) {
+  const row = btn.closest('tr');
+  const inputs = row.querySelectorAll('input');
+  const updated = {};
+  inputs.forEach(inp => {
+    const f = inp.dataset.field;
+    const v = inp.value.trim();
+    updated[f] = v === '' || v === 'null' ? null : (isNaN(v) ? v : parseFloat(v));
+  });
+
+  // Update local data
+  currentData[type][idx] = { ...currentData[type][idx], ...updated };
+
+  if (!currentResultId) {
+    btn.textContent = '✓';
+    btn.classList.add('btn-saved');
+    setTimeout(() => { btn.textContent = 'Speichern'; btn.classList.remove('btn-saved'); }, 1500);
+    return;
+  }
+
+  btn.textContent = '...';
+  btn.disabled = true;
+
+  try {
+    const payload = {};
+    payload[type] = currentData[type];
+    const res = await fetch(`/api/results/${currentResultId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error('Fehler');
+    btn.textContent = '✓ Gespeichert';
+    btn.classList.add('btn-saved');
+    setTimeout(() => { btn.textContent = 'Speichern'; btn.classList.remove('btn-saved'); btn.disabled = false; }, 1500);
+  } catch {
+    btn.textContent = 'Fehler';
+    setTimeout(() => { btn.textContent = 'Speichern'; btn.disabled = false; }, 1500);
+  }
+}
+
+// ---- History --------------------------------------------------------------
+
+let historyVisible = false;
+
+async function toggleHistory() {
+  historyVisible = !historyVisible;
+  const el = document.getElementById('historyList');
+  el.style.display = historyVisible ? 'block' : 'none';
+  if (historyVisible) loadHistory();
+}
+
+async function loadHistory() {
+  try {
+    const res = await fetch('/api/results');
+    const items = await res.json();
+    const container = document.getElementById('historyItems');
+    if (!items.length) {
+      container.innerHTML = '<div class="empty">Noch keine Auswertungen gespeichert.</div>';
+      return;
+    }
+    container.innerHTML = items.map(it => `
+      <div class="hist-item">
+        <div>
+          <div class="name">${esc(it.filename || 'Unbekannt')}</div>
+          <div class="date">${new Date(it.created_at).toLocaleString('de-AT')} · ${it.methode || ''}</div>
+        </div>
+        <button onclick="loadResult('${it.id}')">Laden</button>
+      </div>`).join('');
+  } catch {
+    document.getElementById('historyItems').innerHTML = '<div class="empty">Fehler beim Laden.</div>';
+  }
+}
+
+async function loadResult(id) {
+  showSpinner(true);
+  try {
+    const res = await fetch(`/api/results/${id}`);
+    const data = await res.json();
+    showResults(data.filename || 'Gespeicherter Plan', data);
+    historyVisible = false;
+    document.getElementById('historyList').style.display = 'none';
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    showSpinner(false);
+  }
+}
+
+// ---- Tabs -----------------------------------------------------------------
+
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
+}
+
+// ---- Helpers --------------------------------------------------------------
+
+function showSpinner(on) {
+  document.getElementById('spinner').style.display = on ? 'flex' : 'none';
+}
+
+function showError(msg) {
+  const el = document.getElementById('errorBox');
+  el.textContent = '⚠ ' + msg;
+  el.style.display = 'block';
+}
+
+function hideError() {
+  document.getElementById('errorBox').style.display = 'none';
+}
+
+function esc(v) {
+  if (v == null) return '';
+  return String(v).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
+function nullStr(v) { return v == null ? '' : String(v); }
+</script>
+</body>
+</html>

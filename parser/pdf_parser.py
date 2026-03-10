@@ -59,7 +59,7 @@ def _split_merged_blocks(blocks):
     return result
 
 
-def parse_pdf(pdf_bytes: bytes) -> dict:
+def parse_pdf(pdf_bytes: bytes, api_key: str | None = None) -> dict:
     """
     Parse a PDF floor plan using Vision API (primary) with regex fallback.
 
@@ -67,7 +67,7 @@ def parse_pdf(pdf_bytes: bytes) -> dict:
     """
     try:
         from .vision_parser import parse_plan_with_vision
-        return parse_plan_with_vision(pdf_bytes)
+        return parse_plan_with_vision(pdf_bytes, api_key=api_key)
     except Exception as vision_exc:
         result = _parse_pdf_regex(pdf_bytes)
         result["methode"] = "regex_fallback"
